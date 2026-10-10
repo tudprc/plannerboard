@@ -39,7 +39,9 @@ export const getStatus = () => status;
 /* ---------- Project settings ---------- */
 
 export function project() {
-  return { url: (SUPABASE_URL || saved.url || '').replace(/\/+$/, ''), key: SUPABASE_KEY || saved.key || '' };
+  // Accept the URL with or without a trailing /rest/v1/, as Supabase shows both.
+  const url = (SUPABASE_URL || saved.url || '').replace(/\/+$/, '').replace(/\/rest\/v1$/, '');
+  return { url, key: SUPABASE_KEY || saved.key || '' };
 }
 
 export const builtInProject = () => !!(SUPABASE_URL && SUPABASE_KEY);
