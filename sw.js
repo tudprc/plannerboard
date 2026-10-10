@@ -1,7 +1,7 @@
 // Offline support: always try the network first so updates show up straight
 // away, and fall back to the cached copy when there's no connection.
 
-const CACHE = 'plannerboard-v2';
+const CACHE = 'plannerboard-v3';
 const SHELL = [
   './',
   './index.html',
@@ -12,6 +12,9 @@ const SHELL = [
   './js/flap.js',
   './js/icons.js',
   './js/theme.js',
+  './js/sync.js',
+  './js/config.js',
+  './widget/scriptable.js',
   './manifest.webmanifest',
   './icons/icon.svg',
   './icons/icon-192.png',

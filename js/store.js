@@ -1,6 +1,6 @@
-// App state: airlines (subjects), flights (tasks), and settings.
-// Everything lives in localStorage for now; every change goes through commit()
-// so a sync layer can hook in later without touching the views.
+// App state: airlines (subjects), flights (tasks), settings, and profile.
+// Saved in localStorage; every change goes through commit(), which also tells
+// the sync layer (sync.js) that there's something to upload.
 
 import * as D from './dates.js';
 
@@ -36,6 +36,8 @@ function defaults() {
     dayOrder: {},
     settings: { capacity: 5, mode: 'hardest', startTime: '', sound: false, theme: 'auto' },
     profile: { name: '', callsign: '', base: '', year: '', aircraft: '', motto: '', photo: null },
+    deleted: {}, // id -> when it was deleted, so deletions sync too
+    meta: { settingsAt: 0, profileAt: 0, orderAt: 0 }, // last edit times, for merging
   };
 }
 
@@ -71,8 +73,11 @@ export function load() {
   }
   state.settings = { ...defaults().settings, ...state.settings };
   state.profile = { ...defaults().profile, ...state.profile };
+  state.deleted = state.deleted || {};
+  state.meta = { ...defaults().meta, ...state.meta };
   if (!state.subjects.length) {
-    state.subjects = SEED_SUBJECTS.map((s, i) => ({ id: uid(), ...s, color: LIVERIES[i], counter: 100 }));
+    // Fixed ids so a fresh device's airlines match the ones already in the cloud.
+    state.subjects = SEED_SUBJECTS.map((s, i) => ({ id: `seed-${s.code.toLowerCase()}`, ...s, color: LIVERIES[i], counter: 100, updatedAt: 0 }));
   }
   rollover();
   persist();
@@ -87,10 +92,32 @@ function persist() {
   }
 }
 
-function commit() {
+function commit(info = {}) {
   persist();
-  listeners.forEach((fn) => fn());
+  listeners.forEach((fn) => fn(info));
 }
+
+// Another tab or window of the app saved a change: pick it up instead of
+// overwriting it with our older copy next time we save.
+export function reloadFromDisk() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    if (!raw || raw.version < 2) return;
+    state = {
+      ...defaults(),
+      ...raw,
+      settings: { ...defaults().settings, ...raw.settings },
+      profile: { ...defaults().profile, ...raw.profile },
+      meta: { ...defaults().meta, ...raw.meta },
+      deleted: raw.deleted || {},
+    };
+    listeners.forEach((fn) => fn({ remote: true }));
+  } catch {
+    // Half-written or unreadable: keep what we have.
+  }
+}
+
+export const STORAGE = STORAGE_KEY;
 
 export const subscribe = (fn) => listeners.add(fn);
 export const getState = () => state;
@@ -125,8 +152,8 @@ export const subjectById = (id) => state.subjects.find((s) => s.id === id);
 export function saveSubject({ id, code, name, level, gate, color }) {
   code = code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) || 'XXX';
   const fields = { code, name: name.trim() || code, level, gate: gate.trim().toUpperCase().slice(0, 4), color };
-  if (id) Object.assign(subjectById(id), fields);
-  else state.subjects.push({ id: uid(), ...fields, counter: 100 });
+  if (id) Object.assign(subjectById(id), fields, { updatedAt: now() });
+  else state.subjects.push({ id: uid(), ...fields, counter: 100, updatedAt: now() });
   commit();
 }
 
@@ -135,6 +162,7 @@ export const subjectInUse = (id) => state.tasks.some((t) => t.subjectId === id);
 export function deleteSubject(id) {
   if (subjectInUse(id)) return false;
   state.subjects = state.subjects.filter((s) => s.id !== id);
+  state.deleted[id] = now();
   commit();
   return true;
 }
@@ -151,6 +179,7 @@ export function flightNo(t) {
 export function addTask({ subjectId, title, day, due, difficulty, minutes, notes }) {
   const s = subjectById(subjectId);
   s.counter = (s.counter || 100) + 1;
+  s.updatedAt = now();
   const t = {
     id: uid(),
     subjectId,
@@ -176,7 +205,10 @@ export function addTask({ subjectId, title, day, due, difficulty, minutes, notes
 
 function dropFromOrder(t) {
   const list = t.day && state.dayOrder[t.day];
-  if (list) state.dayOrder[t.day] = list.filter((id) => id !== t.id);
+  if (list) {
+    state.dayOrder[t.day] = list.filter((id) => id !== t.id);
+    state.meta.orderAt = now();
+  }
 }
 
 export function updateTask(id, patch) {
@@ -231,6 +263,7 @@ export function deleteTask(id) {
   if (!t) return;
   dropFromOrder(t);
   state.tasks = state.tasks.filter((x) => x.id !== id);
+  state.deleted[id] = now();
   commit();
 }
 
@@ -306,6 +339,7 @@ export function moveInDay(dayKey, id, dir) {
   if (i < 0 || j < 0 || j >= ids.length) return;
   [ids[i], ids[j]] = [ids[j], ids[i]];
   state.dayOrder[dayKey] = ids;
+  state.meta.orderAt = now();
   commit();
 }
 
@@ -321,12 +355,14 @@ export function placeTask(id, dayKey, beforeId) {
     const ids = flightsForDay(dayKey).pending.map((x) => x.id).filter((x) => x !== id);
     ids.splice(Math.max(0, ids.indexOf(beforeId)), 0, id);
     state.dayOrder[dayKey] = ids;
+    state.meta.orderAt = now();
   }
   commit();
 }
 
 export function autoOrderDay(dayKey) {
   delete state.dayOrder[dayKey];
+  state.meta.orderAt = now();
   commit();
 }
 
@@ -426,11 +462,13 @@ export const profile = () => state.profile;
 
 export function setProfile(patch) {
   Object.assign(state.profile, patch);
+  state.meta.profileAt = now();
   commit();
 }
 
 export function setSetting(key, value) {
   state.settings[key] = value;
+  state.meta.settingsAt = now();
   commit();
 }
 
@@ -445,8 +483,13 @@ export function importData(text) {
 }
 
 export function resetAll() {
+  // Remember what was erased so other synced devices erase it too.
+  const deleted = { ...state.deleted };
+  for (const x of [...state.tasks, ...state.subjects]) if (!x.id.startsWith('seed-')) deleted[x.id] = now();
   localStorage.removeItem(STORAGE_KEY);
   load();
+  state.deleted = deleted;
+  state.meta = { settingsAt: now(), profileAt: now(), orderAt: now() };
   commit();
 }
 
@@ -468,4 +511,126 @@ export function loadDemo() {
   for (const [s, title, day, due, difficulty, minutes] of demo) {
     if (s) addTask({ subjectId: s.id, title, day, due, difficulty, minutes });
   }
+}
+
+/* ---------- Sync support ---------- */
+
+// Fold another device's copy into ours. Flights and airlines merge one by one
+// (newest edit wins, deletions stick); settings, profile and day order come
+// from whichever side changed them last.
+export function mergeRemote(remote) {
+  if (!remote || !Array.isArray(remote.tasks) || !Array.isArray(remote.subjects)) return false;
+  const before = JSON.stringify(state);
+
+  const deleted = { ...state.deleted };
+  for (const [id, at] of Object.entries(remote.deleted || {})) deleted[id] = Math.max(at, deleted[id] || 0);
+  const cutoff = now() - 90 * 86400000;
+  for (const [id, at] of Object.entries(deleted)) if (at < cutoff) delete deleted[id];
+
+  const mergeList = (mine, theirs) => {
+    const byId = new Map();
+    for (const x of [...mine, ...theirs]) {
+      const cur = byId.get(x.id);
+      if (!cur || (x.updatedAt || 0) > (cur.updatedAt || 0)) byId.set(x.id, x);
+    }
+    return [...byId.values()].filter((x) => !(deleted[x.id] && deleted[x.id] >= (x.updatedAt || 0)));
+  };
+  state.deleted = deleted;
+  state.tasks = mergeList(state.tasks, remote.tasks);
+  state.subjects = mergeList(state.subjects, remote.subjects);
+
+  const rm = { settingsAt: 0, profileAt: 0, orderAt: 0, ...remote.meta };
+  if (rm.settingsAt > state.meta.settingsAt) {
+    state.settings = { ...state.settings, ...remote.settings };
+    state.meta.settingsAt = rm.settingsAt;
+  }
+  if (rm.profileAt > state.meta.profileAt) {
+    state.profile = { ...state.profile, ...remote.profile };
+    state.meta.profileAt = rm.profileAt;
+  }
+  if (rm.orderAt > state.meta.orderAt) {
+    state.dayOrder = { ...remote.dayOrder };
+    state.meta.orderAt = rm.orderAt;
+  }
+
+  dedupeSubjects();
+  for (const s of state.subjects) {
+    const nums = state.tasks.filter((t) => t.subjectId === s.id).map((t) => t.num || 0);
+    s.counter = Math.max(s.counter || 100, ...nums);
+  }
+  rollover();
+
+  const changed = JSON.stringify(state) !== before;
+  if (changed) commit({ remote: true });
+  return changed;
+}
+
+// Two devices that started separately can each have their own "Physics".
+// Keep one airline per code and move the flights over to it.
+function dedupeSubjects() {
+  const byCode = new Map();
+  for (const s of state.subjects) {
+    const keep = byCode.get(s.code);
+    if (!keep) {
+      byCode.set(s.code, s);
+      continue;
+    }
+    const used = (x) => state.tasks.some((t) => t.subjectId === x.id);
+    const [winner, loser] =
+      used(s) && !used(keep) ? [s, keep] : !used(s) && used(keep) ? [keep, s] : (s.updatedAt || 0) > (keep.updatedAt || 0) ? [s, keep] : [keep, s];
+    for (const t of state.tasks) {
+      if (t.subjectId === loser.id) Object.assign(t, { subjectId: winner.id, updatedAt: now() });
+    }
+    state.deleted[loser.id] = now();
+    byCode.set(s.code, winner);
+  }
+  state.subjects = state.subjects.filter((s) => byCode.get(s.code) === s);
+}
+
+// A small, ready-to-draw summary of the coming week for the home-screen widgets.
+export function widgetSnapshot() {
+  const today = D.todayKey();
+  const flights = [];
+  for (let i = 0; i <= 7; i++) {
+    const day = D.addDays(today, i);
+    const { pending, done } = flightsForDay(day);
+    const add = (t, seq) => {
+      const s = subjectById(t.subjectId) || {};
+      flights.push({
+        code: flightNo(t),
+        title: t.title,
+        subject: s.name || '',
+        color: s.color || '#888888',
+        gate: s.gate || '',
+        day,
+        seq,
+        due: t.due,
+        minutes: t.minutes,
+        difficulty: t.difficulty,
+        done: t.done,
+        doneAt: t.doneAt,
+        boarding: !!t.boardingAt,
+        delayed: t.delayed || 0,
+      });
+    };
+    pending.forEach((t, seq) => add(t, seq));
+    if (i === 0) done.forEach((t) => add(t, 99));
+  }
+  const deadlines = upcomingDeadlines(14).map((t) => ({
+    code: flightNo(t),
+    title: t.title,
+    due: t.due,
+    color: subjectById(t.subjectId)?.color || '#888888',
+    scheduled: !!t.day,
+  }));
+  return {
+    v: 1,
+    generatedAt: now(),
+    day: today,
+    name: state.profile.name,
+    capacity: state.settings.capacity,
+    theme: state.settings.theme,
+    flights,
+    deadlines,
+  };
 }

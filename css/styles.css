@@ -1505,6 +1505,74 @@ button.frow.is-boarding:hover {
   color: var(--ink-2);
 }
 
+.stack-form {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.sync-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+}
+
+.sync-row > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.sync-row strong {
+  display: block;
+  font-weight: 650;
+}
+
+.sync-row small {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.sync-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+
+.sync-dot.ok {
+  background: var(--go);
+}
+
+.sync-dot.syncing {
+  background: var(--ink);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.sync-dot.offline {
+  background: var(--warn);
+}
+
+.sync-dot.error {
+  background: var(--stop);
+}
+
+#sync .note {
+  margin-bottom: 10px;
+}
+
+.script-box {
+  width: 100%;
+  height: 280px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line-2);
+  background: var(--soft);
+  font: 11px/1.4 var(--mono);
+  resize: vertical;
+}
+
 .sun-hint {
   display: flex;
   align-items: center;

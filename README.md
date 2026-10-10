@@ -31,6 +31,34 @@ node serve.mjs
 
 Then open http://localhost:8420.
 
-## Data
+## Sync and widgets
 
-Flights are saved in the browser on each device (localStorage). Settings → Backup exports a file that you can import on another device. Sync between devices is planned.
+Flights are saved on each device and synced through Supabase (free), which also powers the home-screen widgets.
+
+**One-time setup**
+
+1. Create a free project at [supabase.com](https://supabase.com).
+2. Go to **SQL Editor → New query**, paste [`supabase/setup.sql`](supabase/setup.sql), and click **Run**.
+3. Go to **Authentication → Sign In / Providers → Email** and turn off **Confirm email**. You can leave it on, but then you'll need to click a link in an email before your first sign-in.
+4. Go to **Project Settings → API**, copy the **Project URL** and the **publishable key**, and either:
+   - put them in [`js/config.js`](js/config.js), so every device is already connected, or
+   - paste them into PlannerBoard → **Profile → Sync and widgets → Connect**.
+5. Create an account in the app on one device, then sign in with the same email and password on the others.
+
+**Widgets** (iPhone, and on the Mac desktop via iPhone widgets in macOS Sonoma or later)
+
+1. Install **Scriptable** (free) from the App Store.
+2. In PlannerBoard, open **Profile → Sync and widgets → Copy widget script**.
+3. In Scriptable, tap **+**, paste the script, and name it "PlannerBoard".
+4. Long-press the Home Screen (or Lock Screen), add a **Scriptable** widget in any size, tap it to edit, and choose the **PlannerBoard** script.
+
+| Widget | Shows |
+|---|---|
+| Small | The next departure (or the flight that's boarding) |
+| Medium | Today's board: the next three flights |
+| Large | Today's board, tomorrow's flights, and upcoming deadlines |
+| Lock Screen, rectangular | Next flight, status, and how many are left |
+| Lock Screen, circular | Ring showing today's progress and flights left |
+| Lock Screen, inline | One line above the clock |
+
+The widgets refresh about every 15 minutes (iOS decides exactly when), switch light and dark with the Qingdao sun, and keep showing the last board when you're offline.

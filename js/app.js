@@ -2,6 +2,8 @@ import * as S from './store.js';
 import * as D from './dates.js';
 import { flapHTML, hydrate, forget, setSound } from './flap.js';
 import { icon } from './icons.js';
+import * as Sync from './sync.js';
+import { APP_URL } from './config.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -118,6 +120,23 @@ function ask({ title, message = '', confirm = 'OK', cancel = 'Cancel', danger = 
 }
 
 const tell = (title, message) => ask({ title, message, cancel: null });
+
+function showFormError(form, message) {
+  const el = form?.querySelector('.error');
+  if (!el) return;
+  el.textContent = message;
+  el.hidden = false;
+}
+
+function friendlyAuthError(err) {
+  const m = String(err.message || '');
+  if (err.offline) return 'You’re offline. Connect to the internet and try again.';
+  if (/invalid login/i.test(m)) return 'That email and password don’t match. Check them, or create an account first.';
+  if (/already registered|already exists/i.test(m)) return 'There’s already an account with that email. Sign in instead.';
+  if (/email not confirmed/i.test(m)) return 'Confirm your email first using the link Supabase sent you.';
+  if (/invalid api key|no api key/i.test(m)) return 'The publishable key doesn’t match this project. Check it in Supabase.';
+  return m;
+}
 
 /* ---------- Shell ---------- */
 
@@ -425,6 +444,79 @@ function avatarHTML(p, cls = '') {
   return `<span class="avatar ${cls}">${p.photo ? `<img src="${p.photo}" alt="">` : initials ? esc(initials) : icon('user')}</span>`;
 }
 
+function syncPanel() {
+  const st = Sync.getStatus();
+  const head = `<h2 class="panel-title">${icon('cloud')}Sync and widgets</h2>`;
+  const plain = 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"';
+
+  if (!Sync.isConfigured()) {
+    return `
+    <section class="panel" id="sync">
+      ${head}
+      <p class="hint">Connect your Supabase project to keep your iPhone and Mac in sync and power the home-screen widgets.</p>
+      <form class="stack-form" data-form="sync-project">
+        <label class="field"><span>Project URL</span><input name="url" placeholder="https://abcdefgh.supabase.co" ${plain}></label>
+        <label class="field"><span>Publishable key</span><input name="key" placeholder="sb_publishable_…" ${plain}></label>
+        <small class="error" hidden></small>
+        <button class="btn primary">Connect</button>
+      </form>
+    </section>`;
+  }
+
+  if (!Sync.isSignedIn()) {
+    return `
+    <section class="panel" id="sync">
+      ${head}
+      <p class="hint">Use the same account on your iPhone and your Mac. Your flights stay on this device too, so it all keeps working offline.</p>
+      ${st.message ? `<p class="note warn">${esc(st.message)}</p>` : ''}
+      <form class="stack-form" data-form="sync-auth">
+        <label class="field"><span>Email</span><input name="email" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="you@example.com"></label>
+        <label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" minlength="6" placeholder="At least 6 characters"></label>
+        <small class="error" hidden></small>
+        <div class="btns">
+          <button class="btn primary" name="mode" value="in">Sign in</button>
+          <button class="btn" name="mode" value="up">Create account</button>
+        </div>
+      </form>
+      ${Sync.builtInProject() ? '' : `<button class="btn ghost sm" data-act="sync-forget">Use a different project</button>`}
+    </section>`;
+  }
+
+  const label = { syncing: 'Syncing…', ok: `Synced ${st.at ? since(st.at) : ''}`, offline: 'Offline', error: 'Sync problem', idle: 'Ready to sync' }[st.state] || 'Ready to sync';
+  return `
+  <section class="panel" id="sync">
+    ${head}
+    <div class="sync-row">
+      <span class="sync-dot ${st.state}"></span>
+      <div><strong>${label}</strong><small>${esc(Sync.email())}</small></div>
+      <button class="btn sm" data-act="sync-now">${icon('refresh')}Sync now</button>
+    </div>
+    ${st.state === 'error' || st.state === 'offline' ? `<p class="note warn">${esc(st.message)}</p>` : ''}
+    <div class="field-row">
+      <div><strong>Home-screen widgets</strong><small>Copy the script, then paste it into a new script in the free Scriptable app.</small></div>
+      <button class="btn sm primary" data-act="copy-widget">${icon('copy')}Copy widget script</button>
+    </div>
+    <button class="btn ghost sm" data-act="sync-signout">Sign out</button>
+  </section>`;
+}
+
+// The Scriptable script with this account's details filled in.
+let widgetTemplate = '';
+const loadWidgetTemplate = () =>
+  fetch('widget/scriptable.js')
+    .then((r) => r.text())
+    .then((t) => (widgetTemplate = t))
+    .catch(() => {});
+
+function widgetScript() {
+  const { url, key } = Sync.project();
+  return widgetTemplate
+    .replace('__SUPABASE_URL__', url)
+    .replace('__SUPABASE_KEY__', key)
+    .replace('__WIDGET_KEY__', Sync.widgetKey())
+    .replace('__APP_URL__', APP_URL);
+}
+
 function appearancePanel(st) {
   const T = window.PlannerTheme;
   const { rise, set } = T.sunTimes(new Date());
@@ -437,6 +529,19 @@ function appearancePanel(st) {
         .join('')}</div>
       <p class="hint sun-hint">${icon('sun')}Light from sunrise ${T.qingdaoTime(rise)} to sunset ${T.qingdaoTime(set)}, Qingdao time. Dark at night.</p>
     </section>`;
+}
+
+// Shown when copying to the clipboard isn't allowed: select and copy by hand.
+function scriptSheet() {
+  return `
+  <div class="sheet-inner">
+    <header class="sheet-head">
+      <h2>Widget script</h2>
+      <button class="icon-btn" data-act="close" aria-label="Close">${icon('x')}</button>
+    </header>
+    <p class="hint">Select all of this text, copy it, and paste it into a new script in Scriptable.</p>
+    <textarea class="script-box" readonly onfocus="this.select()">${esc(widgetScript())}</textarea>
+  </div>`;
 }
 
 function profileSheet() {
@@ -499,6 +604,8 @@ function profile() {
         <div class="stat"><span class="stat-n">${stats.total}</span><span class="stat-l">Total flights</span></div>
       </div>
     </section>
+
+    ${syncPanel()}
 
     <section class="panel">
       <h2 class="panel-title">Airlines</h2>
@@ -591,7 +698,7 @@ function renderSheet() {
   const s = ui.sheet;
   if (!s) return;
   if (s.type === 'detail' && !S.taskById(s.id)) return closeSheet();
-  sheet.innerHTML = { detail: detailSheet, form: formSheet, subject: subjectSheet, profile: profileSheet }[s.type](s);
+  sheet.innerHTML = { detail: detailSheet, form: formSheet, subject: subjectSheet, profile: profileSheet, script: scriptSheet }[s.type](s);
   hydrate(sheet, { animateNew: true });
 }
 
@@ -895,6 +1002,32 @@ document.addEventListener('click', (e) => {
       $('#avatarPreview').innerHTML = avatarHTML(S.profile(), 'lg');
       el.hidden = true;
       break;
+    case 'sync-now':
+      Sync.syncNow();
+      break;
+    case 'sync-forget':
+      Sync.setProject('', '');
+      render();
+      break;
+    case 'sync-signout':
+      ask({
+        title: 'Sign out of sync?',
+        message: 'Your flights stay on this device, but changes stop syncing and the widgets stop updating.',
+        confirm: 'Sign out',
+      }).then((yes) => yes && Sync.signOut());
+      break;
+    case 'copy-widget':
+      if (!Sync.widgetKey() || !widgetTemplate) {
+        tell('Almost ready', 'Sync once first, then copy the widget script.');
+        Sync.syncNow();
+        loadWidgetTemplate();
+        break;
+      }
+      navigator.clipboard
+        .writeText(widgetScript())
+        .then(() => toast('Widget script copied', 'copy'))
+        .catch(() => openSheet({ type: 'script' }));
+      break;
     case 'close':
       closeSheet();
       break;
@@ -1018,6 +1151,39 @@ document.addEventListener('submit', (e) => {
   } else if (form.dataset.form === 'subject') {
     S.saveSubject({ id, code: f.get('code') || '', name: f.get('name') || '', level: f.get('level') || 'SL', gate: f.get('gate') || '', color: f.get('color') });
     closeSheet();
+  } else if (form.dataset.form === 'sync-project') {
+    const url = (f.get('url') || '').trim();
+    const key = (f.get('key') || '').trim();
+    if (!url || !key) {
+      showFormError(form, 'Paste both the project URL and the publishable key.');
+      return;
+    }
+    Sync.setProject(url, key);
+    render();
+  } else if (form.dataset.form === 'sync-auth') {
+    const mode = e.submitter?.value || 'in';
+    const email = (f.get('email') || '').trim();
+    const password = f.get('password') || '';
+    if (!email || password.length < 6) {
+      showFormError(form, 'Enter your email and a password of at least 6 characters.');
+      return;
+    }
+    form.querySelectorAll('button').forEach((b) => (b.disabled = true));
+    const busy = e.submitter;
+    if (busy) busy.textContent = mode === 'up' ? 'Creating…' : 'Signing in…';
+    (mode === 'up' ? Sync.signUp(email, password) : Sync.signIn(email, password).then(() => ({})))
+      .then((r) => {
+        if (r?.needsConfirm) {
+          tell('Check your email', 'Open the confirmation link Supabase sent you, then come back and sign in.');
+          render();
+        } else {
+          toast('Signed in. Your board is syncing', 'cloud');
+        }
+      })
+      .catch((err) => {
+        render();
+        showFormError($('form[data-form="sync-auth"]'), friendlyAuthError(err));
+      });
   } else if (form.dataset.form === 'profile') {
     const get = (k) => (f.get(k) || '').trim();
     S.setProfile({ name: get('name'), callsign: get('callsign'), base: get('base').toUpperCase(), year: get('year'), aircraft: get('aircraft'), motto: get('motto') });
@@ -1086,7 +1252,14 @@ document.addEventListener('visibilitychange', () => !document.hidden && tickCloc
 // Audio can only start after a tap.
 document.addEventListener('pointerdown', () => S.settings().sound && setSound(true), { once: true });
 
-// Offline support once it's hosted (skipped on localhost so edits show up straight away).
-if ('serviceWorker' in navigator && isSecureContext && location.hostname !== 'localhost') {
+// Keep several open tabs or windows of the app in step with each other.
+window.addEventListener('storage', (e) => e.key === S.STORAGE && S.reloadFromDisk());
+
+Sync.onStatus(() => ui.route === 'profile' && !$('#sync input:focus') && render());
+Sync.start();
+loadWidgetTemplate();
+
+// Offline support once it's hosted (skipped locally so edits show up straight away).
+if ('serviceWorker' in navigator && isSecureContext && !['localhost', '127.0.0.1'].includes(location.hostname)) {
   navigator.serviceWorker.register('./sw.js');
 }
