@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>PlannerBoard</title>
+  <meta name="description" content="A school planner that works like an airport departure board.">
+  <meta name="theme-color" content="#FFFFFF">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="PlannerBoard">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <script src="js/theme.js"></script>
+  <link rel="stylesheet" href="css/styles.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <main id="view" class="view"></main>
+
+  <div class="dock">
+    <nav id="tabs" class="tabs glass" aria-label="Main"></nav>
+    <button class="fab" data-act="add" aria-label="Add flight">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+    </button>
+  </div>
+
+  <dialog id="sheet" class="sheet"></dialog>
+  <dialog id="ask" class="ask"></dialog>
+  <div id="toast" class="toast glass" role="status" aria-live="polite"></div>
+</body>
+</html>
